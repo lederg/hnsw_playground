@@ -24,17 +24,24 @@ p.set_num_threads(1)
 p.init_index(max_elements=num_elements, ef_construction=200, M=16)
 
 # Element insertion (can be called several times):
+# p.add_items(data, ids)
 p.add_items(data, ids, docids_=docids)
+
 
 # Controlling the recall by setting ef:
 p.set_ef(50)  # ef should always be > k
 
-rc = p.get_items([0,1])
-print('Got items [0,1]:')
-print(rc)
+# rc = p.get_items([0,1])
+# print('Got items [0,1]:')
+# print(rc)
 
 # Query dataset, k - number of the closest elements (returns 2 numpy arrays)
-labels, distances = p.knn_query(data, k=1)
+labels, distances = p.knn_query(data, k=3, use_docids=True)
+# labels, distances = p.knn_query(data, k=3, use_docids=False)
+
+total_uniqs = np.unique(np.apply_along_axis(lambda row: np.unique(row).size, axis=1, arr=docids[labels]))
+is_uniq_docs = len(total_uniqs) == 1
+
 
 # Index objects support pickling
 # WARNING: serialization via pickle.dumps(p) or p.__getstate__() is NOT thread-safe with p.add_items method!
@@ -46,3 +53,4 @@ print(f"Parameters passed to constructor:  space={p_copy.space}, dim={p_copy.dim
 print(f"Index construction: M={p_copy.M}, ef_construction={p_copy.ef_construction}")
 print(f"Index size is {p_copy.element_count} and index capacity is {p_copy.max_elements}")
 print(f"Search speed/quality trade-off parameter: ef={p_copy.ef}")
+print(f"Unique docs: {is_uniq_docs}")

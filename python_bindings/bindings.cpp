@@ -254,10 +254,10 @@ class Index {
             norm_array[i] = data[i] * norm;
     }
 
-
     void addItems(py::object input, py::object ids_ = py::none(), int num_threads = -1, bool replace_deleted = false, py::object docids_ = py::none()) {
         py::array_t < dist_t, py::array::c_style | py::array::forcecast > items(input);
         auto buffer = items.request();
+        bool is_docs = false;
         if (num_threads <= 0)
             num_threads = num_threads_default;
 
@@ -280,7 +280,8 @@ class Index {
             }
             if (docids.size() != rows) {
                 throw std::runtime_error("The input docids shape does not match the input data vector shape");
-            }                        
+            }
+            is_docs = true;
         }
 
 
@@ -290,15 +291,15 @@ class Index {
                 size_t id = ids.size() ? ids.at(0) : (cur_l);
                 float* vector_data = (float*)items.data(0);
                 std::vector<float> norm_array(dim);
-                std::vector<float> vdata(dim+1);                
+                std::vector<float> vdata(dim+1);
                 if (normalize) {
                     normalize_vector(vector_data, norm_array.data());
                     vector_data = norm_array.data();
                 }
-                if(is_multivector) {
+                if(is_docs) {
                     memcpy((void *)vdata.data(), (void *)vector_data, dim*sizeof(float));
-                    l2space_multivector->set_doc_id((void *)vdata.data(),docids.at(0)); 
-                    vector_data = vdata.data();                   
+                    l2space_multivector->set_doc_id((void *)vdata.data(),docids.at(0));
+                    vector_data = vdata.data();
                 }
                 appr_alg->addPoint((void*)vector_data, (size_t)id, replace_deleted);
                 start = 1;
@@ -306,31 +307,40 @@ class Index {
             }
 
             py::gil_scoped_release l;
+            std::vector<float> vdata(num_threads * (dim+1));
+            void *pdata;
             if (normalize == false) {
-                std::vector<float> vdata(num_threads * (dim+1));
                 ParallelFor(start, rows, num_threads, [&](size_t row, size_t threadId) {
+                    size_t mvstart_idx = threadId * (dim+1);
                     size_t id = ids.size() ? ids.at(row) : (cur_l + row);
-                    appr_alg->addPoint((void*)items.data(row), (size_t)id, replace_deleted);
+                    if(is_docs) {
+                        pdata = (void *)(vdata.data()+mvstart_idx);
+                        memcpy(pdata, (void *)items.data(row), dim*sizeof(float));
+                        l2space_multivector->set_doc_id(pdata,docids.at(row));
+                    } else{
+                        pdata = (void*)items.data(row);
+                    }
+                    appr_alg->addPoint(pdata, (size_t)id, replace_deleted);
                     });
             } else {
                 std::vector<float> norm_array(num_threads * dim);
-                std::vector<float> vdata(num_threads * (dim+1));                
                 ParallelFor(start, rows, num_threads, [&](size_t row, size_t threadId) {
                     // normalize vector:
                     size_t start_idx = threadId * dim;
+                    size_t mvstart_idx = threadId * (dim+1);
                     normalize_vector((float*)items.data(row), (norm_array.data() + start_idx));
-
                     size_t id = ids.size() ? ids.at(row) : (cur_l + row);
-                    appr_alg->addPoint((void*)(norm_array.data() + start_idx), (size_t)id, replace_deleted);
+                    if(is_docs) {
+                        pdata = (void *)(vdata.data()+mvstart_idx);
+                        memcpy(pdata, (void*)(norm_array.data() + start_idx), dim*sizeof(float));
+                        l2space_multivector->set_doc_id(pdata,docids.at(row));
+                    } else {
+                        pdata = (void*)(norm_array.data() + start_idx);
+                    }
+                    appr_alg->addPoint(pdata, (size_t)id, replace_deleted);
                     });
             }
             cur_l += rows;
-        }
-        if(is_multivector) {
-            char *p = appr_alg->getDataByInternalId(0);
-            std::cout << "Got the pointer for id 0" << std::endl; 
-            unsigned int docid = l2space_multivector->get_doc_id(p);
-            std::cout << "The docid from pointer is " << docid << std::endl;
         }
     }
 
@@ -359,12 +369,6 @@ class Index {
 
         std::vector<std::vector<data_t>> data;
         for (auto id : ids) {
-            char *p = appr_alg->getDataByInternalId(id);
-            std::cout << "Got the pointer for id " << id << std::endl; 
-            if(is_multivector) {
-                unsigned int docid = l2space_multivector->get_doc_id(p);
-                std::cout << "The docid from pointer is " << docid << std::endl;
-            }
             data.push_back(appr_alg->template getDataByLabel<data_t>(id));
         }
         if (return_type == "list") {
@@ -651,12 +655,17 @@ class Index {
         py::object input,
         size_t k = 1,
         int num_threads = -1,
-        const std::function<bool(hnswlib::labeltype)>& filter = nullptr) {
+        const std::function<bool(hnswlib::labeltype)>& filter = nullptr, bool use_docids=false) {
         py::array_t < dist_t, py::array::c_style | py::array::forcecast > items(input);
         auto buffer = items.request();
         hnswlib::labeltype* data_numpy_l;
         dist_t* data_numpy_d;
         size_t rows, features;
+
+        if (use_docids & !is_multivector) {
+            throw std::runtime_error(
+                "Cannot use docids without multivector space support.");
+        }
 
         if (num_threads <= 0)
             num_threads = num_threads_default;
@@ -679,8 +688,47 @@ class Index {
 
             if (normalize == false) {
                 ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
-                    std::priority_queue<std::pair<dist_t, hnswlib::labeltype >> result = appr_alg->searchKnn(
-                        (void*)items.data(row), k, p_idFilter);
+                    std::priority_queue<std::pair<dist_t, hnswlib::labeltype >> result;
+                    if (use_docids) {
+                        hnswlib::MultiVectorSearchStopCondition<unsigned int, dist_t> stop_condition(*l2space_multivector, k, k+2);
+                        std::vector<std::pair<float, hnswlib::labeltype>> mv_result =
+                                appr_alg->searchStopConditionClosest((void*)items.data(row), stop_condition);
+
+                        size_t num_vectors = mv_result.size();
+
+                        std::unordered_map<unsigned int, size_t> doc_counter;
+                        std::unordered_map<unsigned int, std::pair<float,hnswlib::labeltype>> res_bk;
+                        std::priority_queue<std::pair<float, hnswlib::labeltype >> pr_result;
+                        for (auto pair: mv_result) {
+                            hnswlib::labeltype label = pair.second;
+                            // std::cout << "For pair.second: " << pair.second << " got pair.first: " << pair.first << std::endl;
+                            unsigned int doc_id = l2space_multivector->get_doc_id(appr_alg->getDataByInternalId(label));
+                            doc_counter[doc_id] += 1;
+                            if(doc_counter[doc_id] == 1 || res_bk[doc_id].first > pair.first) {
+                                // std::cout << "Replacing found doc for doc_id " << doc_id << " label is " << label << std::endl;
+                                // std::cout << "Size of res_bk is " << res_bk.size() << std::endl;
+                                // std::cout << "Current distance: " << res_bk[doc_id].first << " new distance: " << pair.first << std::endl;
+                                res_bk[doc_id] = pair;
+                            }
+                        }
+
+                        if (res_bk.size() != k) {
+                            throw std::runtime_error(
+                                "Bad number of optimal results in multivector search.");
+                        }
+                        for (const auto& kv : res_bk) {
+                            result.push(kv.second);
+                        }
+
+                        // std::cout << "Found " << doc_counter.size() << " documents, " << num_vectors << " vectors\n";
+                        // std::cout << "Got " << result.size() << " results for row " << row << std::endl;
+
+                    }
+                    else {
+                        result = appr_alg->searchKnn((void*)items.data(row), k, p_idFilter);
+                    }
+                    // std::priority_queue<std::pair<dist_t, hnswlib::labeltype >> result = appr_alg->searchKnn(
+                    //     (void*)items.data(row), k, p_idFilter);
                     if (result.size() != k)
                         throw std::runtime_error(
                             "Cannot return the results in a contiguous 2D array. Probably ef or M is too small");
@@ -694,13 +742,52 @@ class Index {
             } else {
                 std::vector<float> norm_array(num_threads * features);
                 ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
+                    std::priority_queue<std::pair<dist_t, hnswlib::labeltype >> result;
                     float* data = (float*)items.data(row);
 
                     size_t start_idx = threadId * dim;
                     normalize_vector((float*)items.data(row), (norm_array.data() + start_idx));
+                    if (use_docids) {
+                        hnswlib::MultiVectorSearchStopCondition<unsigned int, dist_t> stop_condition(*l2space_multivector, k, k+2);
+                        std::vector<std::pair<float, hnswlib::labeltype>> mv_result =
+                                appr_alg->searchStopConditionClosest((void*)(norm_array.data() + start_idx), stop_condition);
 
-                    std::priority_queue<std::pair<dist_t, hnswlib::labeltype >> result = appr_alg->searchKnn(
-                        (void*)(norm_array.data() + start_idx), k, p_idFilter);
+                        size_t num_vectors = mv_result.size();
+
+                        std::unordered_map<unsigned int, size_t> doc_counter;
+                        std::unordered_map<unsigned int, std::pair<float,hnswlib::labeltype>> res_bk;
+                        std::priority_queue<std::pair<float, hnswlib::labeltype >> pr_result;
+                        for (auto pair: mv_result) {
+                            hnswlib::labeltype label = pair.second;
+                            // std::cout << "For pair.second: " << pair.second << " got pair.first: " << pair.first << std::endl;
+                            unsigned int doc_id = l2space_multivector->get_doc_id(appr_alg->getDataByInternalId(label));
+                            doc_counter[doc_id] += 1;
+                            if(doc_counter[doc_id] == 1 || res_bk[doc_id].first > pair.first) {
+                                // std::cout << "Replacing found doc for doc_id " << doc_id << " label is " << label << std::endl;
+                                // std::cout << "Size of res_bk is " << res_bk.size() << std::endl;
+                                // std::cout << "Current distance: " << res_bk[doc_id].first << " new distance: " << pair.first << std::endl;
+                                res_bk[doc_id] = pair;
+                            }
+                        }
+
+                        if (res_bk.size() != k) {
+                            throw std::runtime_error(
+                                "Bad number of optimal results in multivector search.");
+                        }
+                        for (const auto& kv : res_bk) {
+                            result.push(kv.second);
+                        }
+
+                        // std::cout << "Found " << doc_counter.size() << " documents, " << num_vectors << " vectors\n";
+                        // std::cout << "Got " << result.size() << " results for row " << row << std::endl;
+
+                    }
+                    else {
+                        result = appr_alg->searchKnn((void*)(norm_array.data() + start_idx), k, p_idFilter);
+                    }
+
+                    // std::priority_queue<std::pair<dist_t, hnswlib::labeltype >> result = appr_alg->searchKnn(
+                    //     (void*)(norm_array.data() + start_idx), k, p_idFilter);
                     if (result.size() != k)
                         throw std::runtime_error(
                             "Cannot return the results in a contiguous 2D array. Probably ef or M is too small");
@@ -965,7 +1052,8 @@ PYBIND11_PLUGIN(hnswlib) {
             py::arg("data"),
             py::arg("k") = 1,
             py::arg("num_threads") = -1,
-            py::arg("filter") = py::none())
+            py::arg("filter") = py::none(),
+            py::arg("use_docids") = false)
         .def("add_items",
             &Index<float>::addItems,
             py::arg("data"),

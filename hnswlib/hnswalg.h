@@ -102,8 +102,6 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         max_elements_ = max_elements;
         num_deleted_ = 0;
         data_size_ = s->get_data_size();
-        std::cout << "data_size_ is " << data_size_ << std::endl;
-        // space_helper = (void *)s;
         fstdistfunc_ = s->get_dist_func();
         dist_func_param_ = s->get_dist_func_param();
         if ( M <= 10000 ) {
