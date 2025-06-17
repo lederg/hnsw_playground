@@ -25,7 +25,7 @@ p.init_index(max_elements=num_elements, ef_construction=200, M=16)
 
 # Element insertion (can be called several times):
 # p.add_items(data, ids)
-p.add_items(data, ids, docids_=docids)
+p.add_items(data, ids, num_threads=1, docids_=docids)
 
 
 # Controlling the recall by setting ef:

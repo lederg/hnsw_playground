@@ -6,6 +6,7 @@
 #include "hnswlib.h"
 #include <thread>
 #include <atomic>
+#include <chrono>
 #include <stdlib.h>
 #include <assert.h>
 
@@ -308,10 +309,10 @@ class Index {
 
             py::gil_scoped_release l;
             std::vector<float> vdata(num_threads * (dim+1));
-            void *pdata;
             if (normalize == false) {
                 ParallelFor(start, rows, num_threads, [&](size_t row, size_t threadId) {
                     size_t mvstart_idx = threadId * (dim+1);
+                    void *pdata;
                     size_t id = ids.size() ? ids.at(row) : (cur_l + row);
                     if(is_docs) {
                         pdata = (void *)(vdata.data()+mvstart_idx);
@@ -325,6 +326,7 @@ class Index {
             } else {
                 std::vector<float> norm_array(num_threads * dim);
                 ParallelFor(start, rows, num_threads, [&](size_t row, size_t threadId) {
+                    void *pdata;
                     // normalize vector:
                     size_t start_idx = threadId * dim;
                     size_t mvstart_idx = threadId * (dim+1);
@@ -685,15 +687,20 @@ class Index {
             // Warning: search with a filter works slow in python in multithreaded mode. For best performance set num_threads=1
             CustomFilterFunctor idFilter(filter);
             CustomFilterFunctor* p_idFilter = filter ? &idFilter : nullptr;
-
+            std::cout << "normalize is " << normalize << std::endl;
             if (normalize == false) {
+                std::vector<std::chrono::duration<double>> timevec;
                 ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
                     std::priority_queue<std::pair<dist_t, hnswlib::labeltype >> result;
                     if (use_docids) {
                         hnswlib::MultiVectorSearchStopCondition<unsigned int, dist_t> stop_condition(*l2space_multivector, k, k+2);
+                        auto start = std::chrono::high_resolution_clock::now();
                         std::vector<std::pair<float, hnswlib::labeltype>> mv_result =
                                 appr_alg->searchStopConditionClosest((void*)items.data(row), stop_condition);
-
+                        auto end = std::chrono::high_resolution_clock::now();
+                        std::chrono::duration<double> elapsed = end - start;
+                        timevec.push_back(elapsed);
+                        // std::cout << "searchStopConditionClosest took " << elapsed.count() << " seconds." << std::endl;
                         size_t num_vectors = mv_result.size();
 
                         std::unordered_map<unsigned int, size_t> doc_counter;
@@ -703,6 +710,9 @@ class Index {
                             hnswlib::labeltype label = pair.second;
                             // std::cout << "For pair.second: " << pair.second << " got pair.first: " << pair.first << std::endl;
                             unsigned int doc_id = l2space_multivector->get_doc_id(appr_alg->getDataByInternalId(label));
+
+                            //  ok thats not thread safe. FIX ME (!!!)
+
                             doc_counter[doc_id] += 1;
                             if(doc_counter[doc_id] == 1 || res_bk[doc_id].first > pair.first) {
                                 // std::cout << "Replacing found doc for doc_id " << doc_id << " label is " << label << std::endl;
@@ -725,8 +735,14 @@ class Index {
 
                     }
                     else {
+                        auto start = std::chrono::high_resolution_clock::now();
                         result = appr_alg->searchKnn((void*)items.data(row), k, p_idFilter);
+                        auto end = std::chrono::high_resolution_clock::now();
+                        std::chrono::duration<double> elapsed = end - start;
+                        timevec.push_back(elapsed);
+                        // std::cout << "searchKnn took " << elapsed.count() << " seconds." << std::endl;
                     }
+
                     // std::priority_queue<std::pair<dist_t, hnswlib::labeltype >> result = appr_alg->searchKnn(
                     //     (void*)items.data(row), k, p_idFilter);
                     if (result.size() != k)
@@ -739,6 +755,16 @@ class Index {
                         result.pop();
                     }
                 });
+                std::cout << "timevec.size() = " << timevec.size();
+                if (!timevec.empty()) {
+                    double sum = 0.0;
+                    for (const auto& t : timevec) sum += t.count();
+                    std::cout << ", avg = " << (sum / timevec.size()) << " sec";
+                    std::cout << std::endl;
+                    std::cout << "total number of metric computations: " << appr_alg->metric_distance_computations << std::endl;
+                    std::cout << "total number of metric hops: " << appr_alg->metric_hops << std::endl;
+
+                }
             } else {
                 std::vector<float> norm_array(num_threads * features);
                 ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
