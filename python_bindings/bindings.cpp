@@ -693,7 +693,7 @@ class Index {
                 ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
                     std::priority_queue<std::pair<dist_t, hnswlib::labeltype >> result;
                     if (use_docids) {
-                        hnswlib::MultiVectorSearchStopCondition<unsigned int, dist_t> stop_condition(*l2space_multivector, k, k+2);
+                        hnswlib::MultiVectorSearchStopCondition<unsigned int, dist_t> stop_condition(*l2space_multivector, k, int(k*1.5)+1);
                         auto start = std::chrono::high_resolution_clock::now();
                         std::vector<std::pair<float, hnswlib::labeltype>> mv_result =
                                 appr_alg->searchStopConditionClosest((void*)items.data(row), stop_condition);
@@ -774,7 +774,7 @@ class Index {
                     size_t start_idx = threadId * dim;
                     normalize_vector((float*)items.data(row), (norm_array.data() + start_idx));
                     if (use_docids) {
-                        hnswlib::MultiVectorSearchStopCondition<unsigned int, dist_t> stop_condition(*l2space_multivector, k, k+2);
+                        hnswlib::MultiVectorSearchStopCondition<unsigned int, dist_t> stop_condition(*l2space_multivector, k, int(k*1.5)+1);
                         std::vector<std::pair<float, hnswlib::labeltype>> mv_result =
                                 appr_alg->searchStopConditionClosest((void*)(norm_array.data() + start_idx), stop_condition);
 
