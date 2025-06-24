@@ -9,6 +9,7 @@
 #include <chrono>
 #include <stdlib.h>
 #include <assert.h>
+// #include <debugging>
 
 namespace py = pybind11;
 using namespace pybind11::literals;  // needed to bring in _a literal
@@ -158,6 +159,7 @@ class Index {
     bool normalize;
     bool is_multivector;
     int num_threads_default;
+    float* dbg_ptr;
     hnswlib::labeltype cur_l;
     hnswlib::HierarchicalNSW<dist_t>* appr_alg;
     hnswlib::SpaceInterface<float>* l2space;
@@ -187,6 +189,7 @@ class Index {
         num_threads_default = std::thread::hardware_concurrency();
 
         default_ef = 10;
+        std::cout << "Version is " << __cplusplus << "\n";
     }
 
 
@@ -298,10 +301,21 @@ class Index {
                     vector_data = norm_array.data();
                 }
                 if(is_docs) {
+                    std::cout << "First float in vector_data is " << vector_data[0] << std::endl;
+                    std::cout << "First float in vdata is " << vdata[0] << std::endl;
+
+                    // std::cout << "Adding first vector with docid " << docids.at(0) << std::endl;
                     memcpy((void *)vdata.data(), (void *)vector_data, dim*sizeof(float));
                     l2space_multivector->set_doc_id((void *)vdata.data(),docids.at(0));
                     vector_data = vdata.data();
+                    std::cout << "First float in vector_data is " << vector_data[0] << std::endl;
+                    std::cout << "First float in vdata is " << vdata[0] << std::endl;
+                    dbg_ptr = (float*)vector_data;
+
+                    std::cout << "(addItems_isdocs) First float in dbg_ptr is " << dbg_ptr[0] << std::endl;
+
                 }
+                // __asm__("int $3"); 
                 appr_alg->addPoint((void*)vector_data, (size_t)id, replace_deleted);
                 start = 1;
                 ep_added = true;
@@ -344,6 +358,10 @@ class Index {
             }
             cur_l += rows;
         }
+
+
+
+    std::cout << "(addItems) First float in dbg_ptr is " << dbg_ptr[0] << std::endl;
     }
 
 
@@ -372,6 +390,10 @@ class Index {
         std::vector<std::vector<data_t>> data;
         for (auto id : ids) {
             data.push_back(appr_alg->template getDataByLabel<data_t>(id));
+        }
+        for (auto& vec : data) {
+            std::cout << "(getData) docid is " << l2space_multivector->get_doc_id((void*)vec.data()) << std::endl;
+            std::cout << "point is " << static_cast<void*>(vec.data()) << std::endl;
         }
         if (return_type == "list") {
             return py::cast(data);
@@ -663,6 +685,8 @@ class Index {
         hnswlib::labeltype* data_numpy_l;
         dist_t* data_numpy_d;
         size_t rows, features;
+
+        std::cout << "First float in dbg_ptr is " << dbg_ptr[0] << std::endl;
 
         if (use_docids & !is_multivector) {
             throw std::runtime_error(

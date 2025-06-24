@@ -85,6 +85,9 @@ int main() {
         std::vector<std::pair<dist_t, hnswlib::labeltype>> gt_results = 
             alg_brute->searchKnnCloserFirst(query_data, max_elements);
         std::unordered_set<docidtype> gt_docs;
+        std::cout << "query " << i << " found " << gt_results.size() << " results\n";
+        std::cout << "query " << i << " found " << hnsw_docs.size() << " documents\n";
+        std::cout << "query " << i << " found " << hnsw_labels.size() << " labels\n";
         for (int i = 0; i < gt_results.size(); i++) {
             if (gt_docs.size() == num_docs) {
                 break;

@@ -70,7 +70,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     std::mutex deleted_elements_lock;  // lock for deleted_elements
     std::unordered_set<tableint> deleted_elements;  // contains internal ids of deleted elements
 
-    // void *space_helper;
+    void *space_helper;
 
 
     HierarchicalNSW(SpaceInterface<dist_t> *s) {
@@ -104,6 +104,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         data_size_ = s->get_data_size();
         fstdistfunc_ = s->get_dist_func();
         dist_func_param_ = s->get_dist_func_param();
+        space_helper = s;
         if ( M <= 10000 ) {
             M_ = M;
         } else {
@@ -838,8 +839,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         lock_table.unlock();
 
         char* data_ptrv = getDataByInternalId(internalId);
-        // std::cout << "getDataByLabel(): internalId is " << internalId << std::endl;
-        // std::cout << "docid is: " << static_cast<hnswlib::MultiVectorL2Space<unsigned int>*>(space_helper)->get_doc_id(data_ptrv) << std::endl;
+        std::cout << "getDataByLabel(): internalId is " << internalId << std::endl;
+        std::cout << "docid is: " << static_cast<hnswlib::MultiVectorL2Space<unsigned int>*>(space_helper)->get_doc_id(data_ptrv) << std::endl;
+        std::cout << "data_ptrv is: " << static_cast<void*>(data_ptrv) << std::endl;
 
         size_t dim = *((size_t *) dist_func_param_);
         std::vector<data_t> data;
