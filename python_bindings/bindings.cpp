@@ -678,6 +678,7 @@ class Index {
     py::object knnQuery_return_numpy(
         py::object input,
         size_t k = 1,
+        size_t max_candidates=0,
         int num_threads = -1,
         const std::function<bool(hnswlib::labeltype)>& filter = nullptr, bool use_docids=false) {
         py::array_t < dist_t, py::array::c_style | py::array::forcecast > items(input);
@@ -686,12 +687,15 @@ class Index {
         dist_t* data_numpy_d;
         size_t rows, features;
 
-        std::cout << "First float in dbg_ptr is " << dbg_ptr[0] << std::endl;
+        // std::cout << "First float in dbg_ptr is " << dbg_ptr[0] << std::endl;
 
         if (use_docids & !is_multivector) {
             throw std::runtime_error(
-                "Cannot use docids without multivector space support.");
+                "Cannot use docids without multivector space support, like duh.");
         }
+
+        if (max_candidates <= 0)
+            max_candidates = k;
 
         if (num_threads <= 0)
             num_threads = num_threads_default;
@@ -717,7 +721,7 @@ class Index {
                 ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
                     std::priority_queue<std::pair<dist_t, hnswlib::labeltype >> result;
                     if (use_docids) {
-                        hnswlib::MultiVectorSearchStopCondition<unsigned int, dist_t> stop_condition(*l2space_multivector, k, int(k*1.5)+1);
+                        hnswlib::MultiVectorSearchStopCondition<unsigned int, dist_t> stop_condition(*l2space_multivector, k, max_candidates);
                         auto start = std::chrono::high_resolution_clock::now();
                         std::vector<std::pair<float, hnswlib::labeltype>> mv_result =
                                 appr_alg->searchStopConditionClosest((void*)items.data(row), stop_condition);
@@ -785,7 +789,7 @@ class Index {
                     for (const auto& t : timevec) sum += t.count();
                     std::cout << ", avg = " << (sum / timevec.size()) << " sec";
                     std::cout << std::endl;
-                    std::cout << "total number of metric computations: " << appr_alg->metric_distance_computations << std::endl;
+                    // std::cout << "total number of metric computations: " << appr_alg->metric_distance_computations << std::endl;
                     std::cout << "total number of metric hops: " << appr_alg->metric_hops << std::endl;
 
                 }
@@ -798,7 +802,7 @@ class Index {
                     size_t start_idx = threadId * dim;
                     normalize_vector((float*)items.data(row), (norm_array.data() + start_idx));
                     if (use_docids) {
-                        hnswlib::MultiVectorSearchStopCondition<unsigned int, dist_t> stop_condition(*l2space_multivector, k, int(k*1.5)+1);
+                        hnswlib::MultiVectorSearchStopCondition<unsigned int, dist_t> stop_condition(*l2space_multivector, k, max_candidates);
                         std::vector<std::pair<float, hnswlib::labeltype>> mv_result =
                                 appr_alg->searchStopConditionClosest((void*)(norm_array.data() + start_idx), stop_condition);
 
@@ -1101,6 +1105,7 @@ PYBIND11_PLUGIN(hnswlib) {
             &Index<float>::knnQuery_return_numpy,
             py::arg("data"),
             py::arg("k") = 1,
+            py::arg("max_candidates") = 0,
             py::arg("num_threads") = -1,
             py::arg("filter") = py::none(),
             py::arg("use_docids") = false)
