@@ -165,6 +165,8 @@ class Index {
     hnswlib::SpaceInterface<float>* l2space;
     hnswlib::MultiVectorL2Space<unsigned int>* l2space_multivector;
 
+    double avg_query_time_ = 0.0; // Store average query time in seconds
+
 
 
     Index(const std::string &space_name, const int dim) : space_name(space_name), dim(dim) {
@@ -301,18 +303,18 @@ class Index {
                     vector_data = norm_array.data();
                 }
                 if(is_docs) {
-                    std::cout << "First float in vector_data is " << vector_data[0] << std::endl;
-                    std::cout << "First float in vdata is " << vdata[0] << std::endl;
+                    // std::cout << "First float in vector_data is " << vector_data[0] << std::endl;
+                    // std::cout << "First float in vdata is " << vdata[0] << std::endl;
 
                     // std::cout << "Adding first vector with docid " << docids.at(0) << std::endl;
                     memcpy((void *)vdata.data(), (void *)vector_data, dim*sizeof(float));
                     l2space_multivector->set_doc_id((void *)vdata.data(),docids.at(0));
                     vector_data = vdata.data();
-                    std::cout << "First float in vector_data is " << vector_data[0] << std::endl;
-                    std::cout << "First float in vdata is " << vdata[0] << std::endl;
+                    // std::cout << "First float in vector_data is " << vector_data[0] << std::endl;
+                    // std::cout << "First float in vdata is " << vdata[0] << std::endl;
                     dbg_ptr = (float*)vector_data;
 
-                    std::cout << "(addItems_isdocs) First float in dbg_ptr is " << dbg_ptr[0] << std::endl;
+                    // std::cout << "(addItems_isdocs) First float in dbg_ptr is " << dbg_ptr[0] << std::endl;
 
                 }
                 // __asm__("int $3"); 
@@ -783,14 +785,15 @@ class Index {
                         result.pop();
                     }
                 });
-                std::cout << "timevec.size() = " << timevec.size();
+                // std::cout << "timevec.size() = " << timevec.size();
                 if (!timevec.empty()) {
                     double sum = 0.0;
                     for (const auto& t : timevec) sum += t.count();
-                    std::cout << ", avg = " << (sum / timevec.size()) << " sec";
-                    std::cout << std::endl;
+                    avg_query_time_ = sum / timevec.size();
+                    // std::cout << ", avg = " << avg_query_time_ << " sec";
+                    // std::cout << std::endl;
                     // std::cout << "total number of metric computations: " << appr_alg->metric_distance_computations << std::endl;
-                    std::cout << "total number of metric hops: " << appr_alg->metric_hops << std::endl;
+                    // std::cout << "total number of metric hops: " << appr_alg->metric_hops << std::endl;
 
                 }
             } else {
@@ -898,6 +901,21 @@ class Index {
 
     size_t getCurrentCount() const {
         return appr_alg->cur_element_count;
+    }
+
+    // Add this method to return metric statistics
+    py::tuple get_metric_stats() const {
+        if (!appr_alg) {
+            throw std::runtime_error("Index not initialized.");
+        }
+        return py::make_tuple(
+            appr_alg->metric_hops.load(),
+            appr_alg->metric_distance_computations.load()
+        );
+    }
+
+    double get_avg_query_time() const {
+        return avg_query_time_;
     }
 };
 
@@ -1132,6 +1150,10 @@ PYBIND11_PLUGIN(hnswlib) {
         .def("resize_index", &Index<float>::resizeIndex, py::arg("new_size"))
         .def("get_max_elements", &Index<float>::getMaxElements)
         .def("get_current_count", &Index<float>::getCurrentCount)
+        .def("get_metric_stats", &Index<float>::get_metric_stats,
+             "Return a tuple (hops, distance_computations) for the last search or accumulated stats.")
+        .def("get_avg_query_time", &Index<float>::get_avg_query_time,
+             "Return the average query time (in seconds) for the last batch of queries.")
         .def_readonly("space", &Index<float>::space_name)
         .def_readonly("dim", &Index<float>::dim)
         .def_readwrite("num_threads", &Index<float>::num_threads_default)

@@ -1381,8 +1381,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
         stop_condition.filter_results(result);
 
-        std::cout << "total number of metric computations: " << metric_distance_computations << std::endl;
-        std::cout << "total number of metric hops: " << metric_hops << std::endl;
+        // std::cout << "total number of metric computations: " << metric_distance_computations << std::endl;
+        // std::cout << "total number of metric hops: " << metric_hops << std::endl;
 
 
         return result;

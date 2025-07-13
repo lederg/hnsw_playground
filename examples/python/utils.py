@@ -3,7 +3,49 @@ import numpy.typing as npt
 import functools
 
 
+def sample_unit_sphere(N, d):
+    """
+    Samples N points uniformly from the surface of a d-dimensional unit sphere. Make sure to sample from the entire sphere, not just the hemisphere.
+    
+    Parameters:
+    - N: Number of points to sample.
+    - d: Dimension of the sphere.
+    
+    Returns:
+    - A 2D numpy array of shape (N, d) containing the sampled points.
+    """
+    # Sample from standard normal, then normalize each row to unit length
+    x = np.random.randn(N, d)
+    x /= np.linalg.norm(x, axis=1, keepdims=True)
+    return x
 
+
+def sample_unit_ar(N, d, rho=0.9):
+    x = np.zeros((N, d))
+    # initial direction
+    z = np.random.randn(d)
+    x[0] = z / np.linalg.norm(z)
+    for t in range(1, N):
+        noise = np.random.randn(d)
+        y = rho * x[t-1] + np.sqrt(1 - rho**2) * noise
+        x[t] = y / np.linalg.norm(y)
+    return x
+
+
+def generate_data(blocks_per_doc, block_size, num_docs, dim, independent=True):
+    if independent:
+        data = sample_unit_sphere(blocks_per_doc * block_size * num_docs, dim)
+    else:
+        data = np.zeros((blocks_per_doc * block_size * num_docs, dim), dtype=np.float32)
+        for i in range(num_docs):
+            for j in range(blocks_per_doc):
+                data[i * blocks_per_doc * block_size + j * block_size:i * blocks_per_doc * block_size + (j + 1) * block_size] = \
+                    sample_unit_ar(block_size, dim, rho=0.8+np.random.rand() * 0.2)
+    docids = np.zeros(blocks_per_doc * block_size * num_docs, dtype=np.int32)
+    for i in range(num_docs):        
+        docids[i * blocks_per_doc * block_size:(i + 1) * blocks_per_doc * block_size] = i
+
+    return data, docids
 
 
 def unique_in_order(k, a: npt.NDArray,) -> npt.NDArray:

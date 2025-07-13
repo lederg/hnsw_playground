@@ -6,25 +6,39 @@ import os
 import json
 from datetime import datetime
 
-from utils import compute_similarity_and_l2, compute_similarity_and_l2_with_unique
+from utils import *
 
 
 def main(
     use_multivector=True,
-    dim=128,
-    num_elements=10000,
+    dim=64,
+    num_elements=0,
+    blocks_per_doc=10,
+    block_size=100,
     k=3,
     max_candidates=6,
     M=16,
     ef=50,
-    numdocs=50,
+    numdocs=0,
+    num_threads=1,
     num_query=100,
+    independent = True,
     experiment_path=None
 ):
     if use_multivector:
         spacename = 'multivector'
     else:
         spacename = 'l2'
+
+    if numdocs <= 0:
+        assert num_elements > 0, "If numdocs is not specified, num_elements must be greater than 0."
+        numdocs = int(num_elements / (blocks_per_doc * block_size))
+    elif num_elements <= 0:
+        assert numdocs > 0, "If num_elements is not specified, numdocs must be greater than 0."
+        num_elements = blocks_per_doc * numdocs * block_size
+    else:
+        print("Both num_elements and numdocs are specified, ignoring blocks_per_doc for data generation.")
+        blocks_per_doc = num_elements // (numdocs * block_size)
 
     # Compose experiment parameter string for filenames
     mv_flag = "mv" if use_multivector else "nomv"
@@ -52,12 +66,20 @@ def main(
         # Generate data and save to new directory
         if exp_dir:
             os.makedirs(exp_dir, exist_ok=True)
-        data = np.float32(np.random.random((num_elements, dim)))
-        data = data / np.linalg.norm(data, axis=1, keepdims=True)
+        data, docids = generate_data(
+            blocks_per_doc=blocks_per_doc,
+            block_size=block_size,
+            num_docs=numdocs,
+            dim=dim,
+            independent=independent
+        )
+        perm = np.random.permutation(len(data))
+        data = data[perm]
+        docids = docids[perm] 
+
+        print("Data generated and permuted.")
         ids = np.arange(num_elements)
-        if use_multivector:
-            docids = np.random.randint(0, numdocs, num_elements)
-        else:
+        if not use_multivector:
             docids = None
 
         p = hnswlib.Index(space=spacename, dim=dim)
@@ -69,7 +91,7 @@ def main(
         p.init_index(max_elements=num_elements, ef_construction=200, M=M)
         bfp.init_index(max_elements=num_elements)
 
-        p.add_items(data, ids, num_threads=1, docids_=docids)
+        p.add_items(data, ids, num_threads=num_threads, docids_=docids)
         bfp.add_items(data, ids)
 
         # Save indices and docids
@@ -134,6 +156,10 @@ def main(
         is_uniq_docs = None
         is_bf_uniq_docs = None
 
+    metric_hops, metric_distance_computations = p.get_metric_stats()
+    avg_query_time = p.get_avg_query_time()
+    print(f"Metric hops: {metric_hops}, Metric distance computations: {metric_distance_computations}")
+    print(f"Average query time: {avg_query_time:.4f} seconds")
     p_copy = pickle.loads(pickle.dumps(p))
 
     print(f"Parameters passed to constructor:  space={p_copy.space}, dim={p_copy.dim}")
@@ -156,13 +182,18 @@ def main(
                 "M": M,
                 "ef": ef,
                 "numdocs": numdocs,
+                "blocks_per_doc": blocks_per_doc,
                 "num_query": num_query,
             },
             "unique_docs": is_uniq_docs,
             "unique_docs_bf": is_bf_uniq_docs,
+            "metric_hops": metric_hops,
+            "metric_distance_computations": metric_distance_computations,
+            "avg_query_time": avg_query_time,
             "index_size": int(p_copy.element_count),
             "index_capacity": int(p_copy.max_elements),
             "ef_runtime": int(p_copy.ef),
+            "command_line": " ".join(os.sys.argv),
         }
         now = datetime.now().strftime("%Y%m%d_%H%M%S")
         results_file = os.path.join(exp_dir, f"results_{now}.json")
